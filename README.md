@@ -304,3 +304,239 @@ Would you like me to build that repository for you now (or pick a specific workl
 [7]: https://learn.microsoft.com/en-us/azure/backup/quick-backup-vm-cli?utm_source=chatgpt.com "Back up a VM with Azure CLI - Learn Microsoft"
 [8]: https://learn.microsoft.com/en-us/azure/backup/automation-backup?utm_source=chatgpt.com "Automation in Azure Backup"
 [9]: https://learn.microsoft.com/en-us/azure/backup/tutorial-restore-disk?utm_source=chatgpt.com "Restore a VM with Azure CLI - Azure Backup | Microsoft Learn"
+
+Below is an updated **code-and-automation reference sheet** for Azure Site Recovery (ASR) covering CLI, Terraform and key modules/resources. As your Cloud Solutions Architect role demands production-ready patterns, I’ve included real-world tips and caveats.
+
+---
+
+## ✅ CLI / Azure PowerShell Snippets
+
+### 1. Install/Configure CLI extension
+
+```bash
+# Install the ASR extension for the Azure CLI
+az extension add --name site-recovery
+```
+
+(This gives you the `az site-recovery` commands). ([N2W Software][1])
+
+### 2. Create Recovery Services Vault (if not already)
+
+```bash
+az group create --name MyRG --location eastus
+
+az recovery-services vault create \
+  --resource-group MyRG \
+  --name MyRSVault \
+  --location eastus
+```
+
+Then set vault context for ASR:
+
+```bash
+az site-recovery vault set \
+  --vault-name MyRSVault \
+  --resource-group MyRG
+```
+
+(Use the vault in subsequent commands) ([N2W Software][1])
+
+### 3. Enable replication for an Azure VM (Azure to Azure scenario)
+
+```bash
+az site-recovery protection-container mapping create \
+  --resource-group MyRG \
+  --vault-name MyRSVault \
+  --fabric-name PrimaryFabric \
+  --protection-container PrimaryPC \
+  --recovery-fabric RecoveryFabric \
+  --recovery-protection-container RecoveryPC \
+  --policy-name MyReplicationPolicy
+
+az site-recovery protected-item create \
+  --resource-group MyRG \
+  --vault-name MyRSVault \
+  --fabric-name PrimaryFabric \
+  --protection-container PrimaryPC \
+  --protection-container-name PrimaryPC \
+  --name MyVMName-RPI \
+  --policy-id <policyId> \
+  --provider-details '{ "azureToAzure": { "osType": "Windows", "vmId": "<sourceVmId>", "recoveryResourceGroupId": "<rgId>", "recoveryAzureNetworkId": "<vnetId>", "recoverySubnetName": "<subnetName>" } }'
+```
+
+This is based on the `az site-recovery protected-item create` command. ([Microsoft Learn][2])
+(You’ll need to replace placeholders with your specific fabric, containers, VM IDs etc.)
+
+### 4. Failover / Test Failover / Commit / Re-protect
+
+```bash
+# Test failover (without committing)
+az site-recovery protected-item planned-failover \
+  --resource-group MyRG \
+  --vault-name MyRSVault \
+  --fabric-name PrimaryFabric \
+  --protection-container PrimaryPC \
+  --name MyVMName-RPI \
+  --failover-direction PrimaryToRecovery
+
+# Unplanned failover
+az site-recovery protected-item unplanned-failover \
+  --resource-group MyRG \
+  --vault-name MyRSVault \
+  --fabric-name PrimaryFabric \
+  --protection-container PrimaryPC \
+  --name MyVMName-RPI
+
+# Commit failover
+az site-recovery protected-item failover-commit \
+  --resource-group MyRG \
+  --vault-name MyRSVault \
+  --fabric-name PrimaryFabric \
+  --protection-container PrimaryPC \
+  --name MyVMName-RPI
+
+# Reprotect (after recovery)
+az site-recovery protected-item reprotect \
+  --resource-group MyRG \
+  --vault-name MyRSVault \
+  --fabric-name RecoveryFabric \
+  --protection-container RecoveryPC \
+  --name MyVMName-RPI
+```
+
+These commands are documented under the `az site-recovery protected-item` section. ([Microsoft Learn][3])
+
+---
+
+## 🔧 Terraform / IaC Snippets
+
+Here are Terraform resources for ASR (Azure → Azure). Use these inside your modules/CI pipeline.
+
+### Terraform resources you’ll likely use
+
+* `azurerm_site_recovery_fabric` – defines the replication fabric. ([Terraform Registry][4])
+* `azurerm_site_recovery_protection_container` – defines a protection container within a fabric. ([Shisho Cloud byGMO - 開発組織のための 脆弱性診断ツール][5])
+* `azurerm_site_recovery_protection_container_mapping` – maps source & target containers with a policy. ([Shisho Cloud byGMO - 開発組織のための 脆弱性診断ツール][6])
+* `azurerm_site_recovery_replication_policy` – defines replication cadence, retention etc. ([Shisho Cloud byGMO - 開発組織のための 脆弱性診断ツール][7])
+* `azurerm_site_recovery_replicated_vm` – the actual VM replication configuration. ([Terraform Registry][8])
+
+### Example Terraform stub
+
+```hcl
+provider "azurerm" {
+  features {}
+}
+
+variable "location_primary"   { default = "eastus" }
+variable "location_recovery"  { default = "westus2" }
+variable "vm_id"              { description = "Source VM Resource ID" }
+
+resource "azurerm_resource_group" "primary" {
+  name     = "rg-asr-primary"
+  location = var.location_primary
+}
+
+resource "azurerm_resource_group" "recovery" {
+  name     = "rg-asr-recovery"
+  location = var.location_recovery
+}
+
+resource "azurerm_recovery_services_vault" "vault" {
+  name                = "rsvault-asr"
+  location            = azurerm_resource_group.primary.location
+  resource_group_name = azurerm_resource_group.primary.name
+  sku                 = "Standard"
+}
+
+resource "azurerm_site_recovery_fabric" "primary_fabric" {
+  name                = "fabric-primary"
+  resource_group_name = azurerm_resource_group.primary.name
+  location            = azurerm_resource_group.primary.location
+  recovery_vault_name = azurerm_recovery_services_vault.vault.name
+}
+
+resource "azurerm_site_recovery_fabric" "recovery_fabric" {
+  name                = "fabric-recovery"
+  resource_group_name = azurerm_resource_group.recovery.name
+  location            = azurerm_resource_group.recovery.location
+  recovery_vault_name = azurerm_recovery_services_vault.vault.name
+}
+
+resource "azurerm_site_recovery_protection_container" "primary_pc" {
+  name                = "pc-primary"
+  resource_group_name = azurerm_resource_group.primary.name
+  recovery_vault_name = azurerm_recovery_services_vault.vault.name
+  fabric_name         = azurerm_site_recovery_fabric.primary_fabric.name
+}
+
+resource "azurerm_site_recovery_protection_container" "recovery_pc" {
+  name                = "pc-recovery"
+  resource_group_name = azurerm_resource_group.recovery.name
+  recovery_vault_name = azurerm_recovery_services_vault.vault.name
+  fabric_name         = azurerm_site_recovery_fabric.recovery_fabric.name
+}
+
+resource "azurerm_site_recovery_replication_policy" "policy" {
+  name                = "asr-policy"
+  resource_group_name = azurerm_resource_group.primary.name
+  recovery_vault_name = azurerm_recovery_services_vault.vault.name
+
+  # Example settings – you’ll tune these
+  recovery_point_retention_in_minutes = 60
+  application_consistent_snapshot_frequency_in_hours = 4
+  multi_vm_sync_status = "Enabled"
+}
+
+resource "azurerm_site_recovery_protection_container_mapping" "mapping" {
+  name                            = "mapping-pc"
+  resource_group_name             = azurerm_resource_group.primary.name
+  recovery_vault_name             = azurerm_recovery_services_vault.vault.name
+  source_fabric_name              = azurerm_site_recovery_fabric.primary_fabric.name
+  target_fabric_name              = azurerm_site_recovery_fabric.recovery_fabric.name
+  source_protection_container_name = azurerm_site_recovery_protection_container.primary_pc.name
+  target_protection_container_name = azurerm_site_recovery_protection_container.recovery_pc.name
+  replication_policy_id           = azurerm_site_recovery_replication_policy.policy.id
+}
+
+resource "azurerm_site_recovery_replicated_vm" "vm_replication" {
+  name                            = "asr-replica-vm"
+  resource_group_name             = azurerm_resource_group.primary.name
+  recovery_vault_name             = azurerm_recovery_services_vault.vault.name
+  source_vm_id                    = var.vm_id
+  recovery_fabric_name            = azurerm_site_recovery_fabric.recovery_fabric.name
+  target_resource_group_id        = azurerm_resource_group.recovery.id
+  target_availability_zone         = "1"  # if using zones
+}
+```
+
+⚠️ **Note**: Actual parameters vary by region, subscription, VM type, encryption, network mappings and workloads. There’s no Terraform resource to *initiate* failover – you’ll need to trigger via CLI or PowerShell (or Azure REST) in pipeline. ([Microsoft Learn][9])
+
+---
+
+## 🔍 Key Tips & Caveats for Production-Readiness
+
+* Ensure your target region has **sufficient quota and resources** (VM sizes, storage, vNet) for recovery. ([Microsoft Learn][10])
+* Application-consistent snapshots require agents/extensions and may incur impact.
+* If your source VM uses encryption (BYOK, KEK, Disk Encryption), validate compatibility with ASR.
+* Regularly test failover (both planned and unplanned) to validate your recovery plan.
+* Monitor the vault and replication health; use alerts for “replication lag” or “health unhealthy”. ([Microsoft Learn][11])
+* Treat your ASR setup as part of your broader BCDR strategy — document roles, responsibilities, workflows (failover, failback, reverse-replication).
+* In Terraform, consider using `depends_on` and null-resources/hooks for post-deployment tasks (e.g., initiating failover, updating network mappings) since some operations are not yet available as first-class resources.
+* Maintain the IaC definitions in source control (GitHub) and integrate with CI/CD (GitHub Actions or Azure DevOps) so you can version, review and audit changes to DR configuration.
+
+---
+
+If you like, I can **generate a full GitHub-ready repository** (with module structure, CI/CD pipeline YAML, README (English + Hindi + Marathi), and architecture diagrams) tailored for ASR (VM replication + failover + failback) — would that be helpful to you?
+
+[1]: https://n2ws.com/blog/microsoft-azure-cloud-services/azure-site-recovery-cli-tutorial?utm_source=chatgpt.com "Setting Up Azure Site Recovery: A Step-by-Step CLI Tutorial"
+[2]: https://learn.microsoft.com/en-us/cli/azure/site-recovery/protected-item?view=azure-cli-latest&utm_source=chatgpt.com "az site-recovery protected-item | Microsoft Learn"
+[3]: https://learn.microsoft.com/en-us/cli/azure/site-recovery?view=azure-cli-latest&utm_source=chatgpt.com "az site-recovery | Microsoft Learn"
+[4]: https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/site_recovery_fabric?utm_source=chatgpt.com "azurerm_site_recovery_fabric | Resources | hashicorp/azurerm"
+[5]: https://shisho.dev/dojo/providers/azurerm/Recovery_Services/azurerm-site-recovery-protection-container/?utm_source=chatgpt.com "Azure Recovery Services Protection Container - Shisho Cloud"
+[6]: https://shisho.dev/dojo/providers/azurerm/Recovery_Services/azurerm-site-recovery-protection-container-mapping/?utm_source=chatgpt.com "Azure Recovery Services Protection Container Mapping | Shisho Dojo"
+[7]: https://shisho.dev/dojo/providers/azurerm/Recovery_Services/azurerm-site-recovery-replication-policy/?utm_source=chatgpt.com "Azure Recovery Services Replication Policy - Shisho Cloud"
+[8]: https://registry.terraform.io/providers/hashicorp/azurerm/3.109.0/docs/resources/site_recovery_replicated_vm?utm_source=chatgpt.com "azurerm_site_recovery_replicate..."
+[9]: https://learn.microsoft.com/en-us/answers/questions/2169252/how-do-i-initiate-azure-site-recovery-failover-usi?utm_source=chatgpt.com "How do I initiate Azure Site Recovery failover using Terraform?"
+[10]: https://learn.microsoft.com/en-us/azure/site-recovery/azure-to-azure-tutorial-enable-replication?utm_source=chatgpt.com "Tutorial: Set up disaster recovery for Azure VMs - Microsoft Learn"
+[11]: https://learn.microsoft.com/en-us/azure/site-recovery/azure-to-azure-troubleshoot-errors?utm_source=chatgpt.com "Troubleshoot Azure VM replication in Azure Site Recovery"
+
