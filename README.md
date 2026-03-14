@@ -1,6 +1,6 @@
 # 📦 Azure Backup & Azure Site Recovery (ASR)
 
-**Enterprise-Grade Backup & Disaster Recovery – Architected & Automated**
+# Enterprise-Grade Backup & Disaster Recovery – Architected & Automated
 
 ![Image](https://learn.microsoft.com/en-us/azure/backup/media/guidance-best-practices/azure-backup-architecture.png)
 
