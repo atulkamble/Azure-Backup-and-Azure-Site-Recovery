@@ -39,7 +39,10 @@ az group create --name rg-dr --location westus
 ```
 
 ---
-
+```
+az vm list-sizes --location eastus -o table
+```
+---
 # 🖥️ Step 2: Create Source VM (Primary Region)
 
 ```bash
@@ -47,6 +50,7 @@ az vm create \
   --resource-group rg-primary \
   --name vm-primary \
   --image Ubuntu2204 \
+  --size Standard_L2aos_v4 \
   --admin-username azureuser \
   --generate-ssh-keys \
   --location eastus
