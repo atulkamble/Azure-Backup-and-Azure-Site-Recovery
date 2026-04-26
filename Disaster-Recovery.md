@@ -67,10 +67,20 @@ az vm list -d -o table
 # 🛡️ Step 3: Create Recovery Services Vault
 
 ```bash
-az recoveryservices vault create \
-  --name asr-vault \
+az resource create \
   --resource-group rg-dr \
-  --location westus
+  --name asr-vault \
+  --resource-type Microsoft.RecoveryServices/vaults \
+  --is-full-object \
+  --properties '{
+    "location": "westus",
+    "sku": {
+      "name": "Standard"
+    },
+    "properties": {
+      "publicNetworkAccess": "Enabled"
+    }
+  }'
 ```
 
 ---
