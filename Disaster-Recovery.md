@@ -101,11 +101,13 @@ az recoveryservices vault set-context \
 
 👉 Portal Steps:
 
-1. Go to **Recovery Services Vault**
-2. Click **+ Replicate**
+1. Go to **Recovery Services Vault | asr-vault | Site Recovery | Enable Site Recovery**
+2. Click **+Enable Replication**
 3. Select:
 
    * Source: Azure
+   * Resource Group: rg-primary
+   * Account Automation: Create
    * VM: `vm-primary`
    * Target region: `westus`
 4. Enable replication
