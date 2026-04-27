@@ -50,6 +50,18 @@ az vm create \
   --resource-group rg-primary \
   --name vm-primary \
   --image Ubuntu2204 \
+  --size Standard_D2s_v3 \
+  --admin-username azureuser \
+  --generate-ssh-keys \
+  --location eastus
+
+The resource write operation failed to complete successfully, because it reached terminal provisioning state 'Failed'. (Code: ResourceDeploymentFailure)
+Azure Site Recovery does not support protection of virtual machines using an NVMe disk controller when the guest operating system is not compatible with ASR NVMe requirements. Detected OS: ubuntu, Version: 22.04. (Code: 151273)
+
+az vm create \
+  --resource-group rg-primary \
+  --name vm-primary \
+  --image Ubuntu2204 \
   --size Standard_L2aos_v4 \
   --admin-username azureuser \
   --generate-ssh-keys \
