@@ -1125,3 +1125,314 @@ If you like, I can **generate a full GitHub-ready repository** (with module stru
 [10]: https://learn.microsoft.com/en-us/azure/site-recovery/azure-to-azure-tutorial-enable-replication?utm_source=chatgpt.com "Tutorial: Set up disaster recovery for Azure VMs - Microsoft Learn"
 [11]: https://learn.microsoft.com/en-us/azure/site-recovery/azure-to-azure-troubleshoot-errors?utm_source=chatgpt.com "Troubleshoot Azure VM replication in Azure Site Recovery"
 
+# 🚀 Azure Site Recovery (ASR) – Complete Guide
+
+---
+
+# 🔹 1. What is Azure Site Recovery?
+
+![Image](https://images.openai.com/static-rsc-4/d03dwhZ844O4OTr52_2M6LfQq_yvcglOTGYQyacKXgMSLWt1yxT8Q6BmYPPsWkri_tvZjgyWtZZYk2a7qCfOp0DW1StW1y8lsPpdp41eSE0K0L5UHfYESSqEX8w_yDFFgu9HE2lYgJqsBpPceGMpiyk69XQbsUBIplQIpRmLimRzKOdMz1BB7hRgC8xGAgtN?purpose=fullsize)
+
+![Image](https://images.openai.com/static-rsc-4/AD03toxVIrbgkFq3o69e6WecINrqae-1DBZz-dTTczGK48r9fJYu_D85spR92v_KZCAB-ygU5YoADOjoW59yr8Fa8QkF6Xa_JftWfRpwEkI_2vPQQH3TVi-WzLEILwSAs7yarQ6mcyFfS81SC8s9u83w8xlZuZ_DcdjMc_94LJEJMDr-dfrOuIQAYZHcuj_I?purpose=fullsize)
+
+![Image](https://images.openai.com/static-rsc-4/9ftZ6GShOotqieFTiF_jqJkMpxNYB3eZE2MQ_iViZ-yREKBEdN1hcmZY-wN43GtTd82tYsjH7LkvNIvaFdYC1qWH5uKjk4tw_8nJ4FIcJGV-T9cPukThrfgLFFjSFSbU_RnOnARvto-pfmn228GM4Q_IDY4RvgFwcRFwAm0eHFnEv3-mo_Lxq2LmF2MKRCA8?purpose=fullsize)
+
+![Image](https://images.openai.com/static-rsc-4/v103p6J6HPQrC2ozpm3lUKtbavb9EZk_IAukpAsVIdZFr5RVS1pHj784LQH1yb9o53mQuo7ZvMnMNOkEnf41Om3lDV1k8ya1JRx19fIoKNXT02PSn-uPOqJdrFd19Y-lJcoMt0YQENZq--3mpRh_wBj8RRpusKLYlpjOlLrJt8uKTURPWkd207jgOrpTyGfT?purpose=fullsize)
+
+![Image](https://images.openai.com/static-rsc-4/3K7Ug2a1Hgl7WPw_BFR8F92nyEtSbC0ANPZp7Qqxs7L4QrWuoPwoXkJMoy4NCx6aEtUU2xPdAPWhyAt49JWYIWkDt6N_O1FZPEkA9NdEAceq1RrZfsAxvocdwqPmedfrsFRbJyZw8gprnmH3UNRJFCTDbJ_KBm-THIBoZE5ZztYZvR3Rg_vgGf6xGVWd94x-?purpose=fullsize)
+
+![Image](https://images.openai.com/static-rsc-4/EqXyVZ2zgTHeHdb3IvOUWZnZNGb7jWzJ6nOxfq3DCQvyZzUftHgtJ4uRAaonsShdvMc08_V7mqtgWE57mkh0t97UbDgvI-_5UpiBa8GAk87cwD2iClWNXGvE-ctKLIoY_4lT1Zl3JvLnAzf0VmEG6jokthIyPMSyQLXSTxyM_FUlG4_P6YI_2Kw6TChern24?purpose=fullsize)
+
+👉 **Azure Site Recovery (ASR)** = Disaster Recovery (DR) solution
+
+### ✔️ It provides:
+
+* VM replication (Primary → Secondary region)
+* Failover (disaster switch)
+* Failback (return to primary)
+
+---
+
+# 🔹 2. Core Components
+
+| Component               | Purpose                    |
+| ----------------------- | -------------------------- |
+| Recovery Services Vault | Central DR management      |
+| Source VM               | Primary workload           |
+| Target Region           | DR location                |
+| Cache Storage           | Temporary replication data |
+| Mobility Agent          | Replication engine         |
+
+---
+
+# 🔹 3. Supported Matrix (Important)
+
+## ✔️ OS Support (from your doc)
+
+* Windows Server: 2008 R2 → 2025
+* Linux:
+
+  * RHEL: 6 → 10
+  * Ubuntu: 14.04 → 24.04
+  * Debian: 7 → 12
+  * SLES: 11 → 15
+  * Oracle Linux, Rocky, Alma
+
+📌 Must use **stock kernel only** 
+
+---
+
+## ✔️ VM Size (CRITICAL)
+
+* Supported:
+
+  * B-series
+  * Dv3 / Dv4
+  * Ev3 / Ev4
+* Avoid:
+
+  * Dv5 / Ev5 (NVMe issue ❌)
+
+---
+
+## ✔️ Disk Support
+
+* Managed disks ✅
+* Premium SSD ✅
+* NVMe ❌ (common failure)
+
+---
+
+## ✔️ Region Support
+
+* Any Azure region → Any region
+* Same geo cluster recommended
+
+📌 Global DR supported 
+
+---
+
+# 🔹 4. Architecture Flow
+
+```
+Primary VM
+   ↓
+Mobility Agent
+   ↓
+Cache Storage (same region)
+   ↓
+Target Region Storage
+   ↓
+Failover VM created
+```
+
+---
+
+# 🔹 5. Step-by-Step Setup (Portal)
+
+## 🔸 Step 1: Create Vault
+
+* Go to Azure Portal
+* Create → Recovery Services Vault
+
+---
+
+## 🔸 Step 2: Enable Replication
+
+* Vault → Site Recovery → Enable Replication
+* Source:
+
+  * Azure VM
+* Target:
+
+  * Region (example: Central India → South India)
+
+---
+
+## 🔸 Step 3: Configure Settings
+
+* Select VM
+* Choose:
+
+  * Disk type
+  * Cache storage account
+  * Replication policy
+
+---
+
+## 🔸 Step 4: Install Mobility Agent
+
+* Auto-installed (Azure-to-Azure)
+* Or manual (on-prem scenarios)
+
+---
+
+## 🔸 Step 5: Start Replication
+
+* Initial sync starts
+* Monitor in:
+
+  * Replicated Items
+
+---
+
+# 🔹 6. Failover Types
+
+| Type               | Use                      |
+| ------------------ | ------------------------ |
+| Test Failover      | DR testing (no downtime) |
+| Planned Failover   | Controlled migration     |
+| Unplanned Failover | Disaster scenario        |
+
+---
+
+## 🔸 Failover Steps
+
+* Go to VM → Replicated Items
+* Click **Failover**
+* Select recovery point
+* Choose network
+
+---
+
+# 🔹 7. Failback (Reverse DR)
+
+* After failover:
+
+  * Re-protect VM
+  * Sync back to original region
+  * Perform failback
+
+---
+
+# 🔹 8. Real Issue (Your Case – NVMe)
+
+## ❌ Error
+
+> NVMe disk controller not supported
+
+---
+
+## ✔️ Fix Steps
+
+### Step 1: Check Disk Type
+
+```bash
+lsblk -o NAME,MODEL
+```
+
+If shows:
+
+```
+nvme0n1 ❌
+```
+
+---
+
+### Step 2: Use Supported VM Size
+
+```bash
+Standard_D2s_v3
+Standard_B2s
+```
+
+---
+
+### Step 3: Ensure Kernel Supported
+
+```bash
+uname -r
+```
+
+---
+
+### Step 4: Re-enable Replication
+
+* Disable → Enable again
+
+---
+
+# 🔹 9. Azure CLI (VM Creation – Non NVMe)
+
+```bash
+az vm create \
+  --resource-group rg-dr \
+  --name vm-asr \
+  --image Ubuntu2204 \
+  --size Standard_D2s_v3 \
+  --admin-username azureuser \
+  --generate-ssh-keys \
+  --location centralindia
+```
+
+---
+
+# 🔹 10. Key Requirements (Exam Focus)
+
+✔ Supported OS
+✔ Supported kernel
+✔ Supported VM size
+✔ Managed disk
+✔ Mobility Agent
+
+---
+
+# 🔹 11. Common Errors & Fix
+
+| Error                | Reason             | Fix             |
+| -------------------- | ------------------ | --------------- |
+| NVMe not supported   | New VM series      | Use Dv3         |
+| Replication failed   | Kernel mismatch    | Update kernel   |
+| Agent not installed  | OS issue           | Reinstall agent |
+| Region not available | Subscription issue | Enable region   |
+
+---
+
+# 🔹 12. Best Practices (Architect Level)
+
+* Use **region pairs**
+* Test failover regularly
+* Use **Premium SSD for DR**
+* Monitor via Azure Monitor
+* Use **separate DR VNet**
+
+---
+
+# 🔹 13. Quick Cheat Sheet
+
+| Area    | Recommendation       |
+| ------- | -------------------- |
+| VM Size | D2s_v3               |
+| OS      | Ubuntu 20.04 / 22.04 |
+| Disk    | Premium SSD          |
+| Region  | Paired region        |
+| Agent   | Latest               |
+
+---
+
+# 🔹 14. Interview Questions
+
+### Q1: What is ASR?
+
+👉 DR solution for VM replication
+
+### Q2: Why NVMe issue?
+
+👉 Unsupported disk controller
+
+### Q3: What is Mobility Agent?
+
+👉 Replication agent
+
+### Q4: Difference: Backup vs ASR?
+
+* Backup = restore data
+* ASR = live failover
+
+---
+
+# 🔥 Final Architect Summary
+
+👉 *“Azure Site Recovery replicates workloads across regions using a Mobility Agent and cache storage. For successful DR, VM must use supported OS, kernel, and non-NVMe disk-based VM sizes.”*
+
+---
