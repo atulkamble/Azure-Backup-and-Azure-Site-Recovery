@@ -156,51 +156,379 @@ resource "azurerm_backup_protected_vm" "vm" {
 * Azure region outage
 * Large-scale infrastructure failure
 * Regulatory RTO/RPO commitments
+* Recovery orchestration for complete VM-based applications
 
 ### Azure-to-Azure (A2A) Flow
 
-1. Source VM disks replicated to target region
-2. Continuous replication (near-real-time)
-3. Recovery plans orchestrate:
-
-   * Boot order
-   * Network mapping
-   * App dependencies
-4. Failover → Commit → Re-protect → Failback
+1. Source VM disks replicate to the target region
+2. Continuous replication keeps recovery points current
+3. Recovery plans orchestrate boot order, network mapping, and app dependencies
+4. Operational sequence is **Test Failover -> Failover -> Commit -> Re-protect -> Failback**
 
 ---
 
 ## 7️⃣ ASR Core Components
 
-| Component                  | Purpose                  |
-| -------------------------- | ------------------------ |
-| Recovery Services Vault    | Central DR control       |
-| Fabric                     | Azure region abstraction |
-| Protection Container       | Logical VM grouping      |
-| Replication Policy         | RPO & snapshot frequency |
-| Replication-Protected Item | The VM                   |
-| Recovery Plan              | Orchestrated failover    |
+| Component                  | Purpose                             |
+| -------------------------- | ----------------------------------- |
+| Recovery Services Vault    | Central DR control plane            |
+| Fabric                     | Region abstraction used by ASR      |
+| Protection Container       | Logical grouping of protected items |
+| Replication Policy         | Recovery point and snapshot rules   |
+| Replication-Protected Item | A protected VM                      |
+| Recovery Plan              | Ordered failover workflow           |
 
 ---
 
-## 8️⃣ ASR – Terraform Automation Model
+## 7️⃣.1️⃣ ASR Operational Facts
 
-> **Reality check:**
-> Terraform **configures replication**, but **failover is operational**
-> (triggered via CLI/PowerShell/runbooks).
+### Supported Workloads
 
-### Terraform Scope (Correct Usage)
+* Azure Virtual Machines
+* VMware virtual machines
+* Hyper-V virtual machines
+* Physical Windows and Linux servers
 
-✔ Vault
-✔ Replication policy
-✔ Protection containers
-✔ VM replication
+### Recovery Behavior
 
-❌ Failover execution (intentional safety)
+* Continuous replication is used for DR readiness
+* Crash-consistent and application-consistent recovery points are supported
+* Recovery point retention can be configured based on workload needs
+
+### Failover Modes
+
+* **Test Failover** for DR validation without production impact
+* **Planned Failover** when shutdown and controlled cutover are possible
+* **Unplanned Failover** during an actual outage scenario
+
+### Pricing Reminder
+
+* Billing is based primarily on protected instances
+* The first 31 days are free per protected instance for many ASR scenarios, which is useful for pilots and initial testing
 
 ---
 
-## 9️⃣ Backup + DR Reference Architecture (Recommended)
+## 8️⃣ Azure Site Recovery – Step-by-Step Runbook
+
+### Prerequisites
+
+* Azure CLI installed and logged in: `az login`
+* `site-recovery` extension installed if your CLI does not already include the commands
+
+```bash
+az extension add --name site-recovery
+```
+
+* Source VM running in the primary region
+* Target region chosen and validated for ASR support
+* Target networking planned before replication is enabled
+* Recovery Services Vault available for DR operations
+
+### Recommended Variables
+
+```bash
+LOCATION_SRC="eastus"
+LOCATION_DR="westus2"
+RG_PRIMARY="rg-primary"
+RG_DR="rg-dr"
+VAULT_RG="$RG_DR"
+VAULT_NAME="asr-vault"
+VM_NAME="vm-primary"
+VNET_DR="vnet-dr"
+SUBNET_DR="subnet-dr"
+ASR_POLICY="A2A-5min-24hr"
+MAPPING_NAME="map-primary-to-dr"
+RECOVERY_PLAN="rp-vm-primary"
+FABRIC_NAME="Azure"
+```
+
+### Step 1: Create Resource Groups
+
+```bash
+az group create --name "$RG_PRIMARY" --location "$LOCATION_SRC"
+az group create --name "$RG_DR" --location "$LOCATION_DR"
+```
+
+### Step 2: Validate VM Size Before Protection
+
+```bash
+az vm list-sizes --location "$LOCATION_SRC" -o table
+```
+
+### Step 3: Create the Source VM
+
+```bash
+az vm create \
+  --resource-group "$RG_PRIMARY" \
+  --name "$VM_NAME" \
+  --image Ubuntu2204 \
+  --size Standard_D2s_v3 \
+  --admin-username azureuser \
+  --generate-ssh-keys \
+  --location "$LOCATION_SRC"
+```
+
+> **Compatibility note:**
+> If the deployment fails with ASR compatibility issues related to the NVMe controller, select a supported size and retry. One example from lab testing was switching from an unsupported configuration to `Standard_L2aos_v4`.
+
+```bash
+az vm list -d -o table
+```
+
+### Step 4: Create the Recovery Services Vault
+
+```bash
+az resource create \
+  --resource-group "$VAULT_RG" \
+  --name "$VAULT_NAME" \
+  --resource-type Microsoft.RecoveryServices/vaults \
+  --is-full-object \
+  --properties "{\
+    \"location\": \"$LOCATION_DR\",\
+    \"sku\": {\
+      \"name\": \"Standard\"\
+    },\
+    \"properties\": {\
+      \"publicNetworkAccess\": \"Enabled\"\
+    }\
+  }"
+```
+
+### Step 5: Set Vault Context
+
+```bash
+az recoveryservices vault set-context \
+  --name "$VAULT_NAME" \
+  --resource-group "$VAULT_RG"
+```
+
+### Step 6: Prepare the DR Network
+
+```bash
+az network vnet create \
+  --resource-group "$RG_DR" \
+  --name "$VNET_DR" \
+  --location "$LOCATION_DR" \
+  --address-prefixes 10.40.0.0/16 \
+  --subnet-name "$SUBNET_DR" \
+  --subnet-prefix 10.40.1.0/24
+```
+
+### Step 7: Create the ASR Policy
+
+```bash
+az site-recovery policy create \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --name "$ASR_POLICY" \
+  --provider-type A2A \
+  --recovery-point-retention-in-hours 24 \
+  --application-consistent-snapshot-frequency-in-hours 1
+```
+
+### Step 8: Discover Protection Containers
+
+```bash
+SRC_CONTAINER=$(az site-recovery protection-container list \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --query "[?contains(name, 'default')].name" -o tsv)
+
+TGT_CONTAINER=$(az site-recovery protection-container list \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --query "[?contains(name, 'default')].name" -o tsv)
+```
+
+### Step 9: Map the Source and Target Containers
+
+```bash
+az site-recovery protection-container-mapping create \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --name "$MAPPING_NAME" \
+  --policy-name "$ASR_POLICY" \
+  --source-protection-container-name "$SRC_CONTAINER" \
+  --target-protection-container-name "$TGT_CONTAINER"
+```
+
+### Step 10: Discover the Protectable VM
+
+```bash
+PROTECTABLE_ID=$(az site-recovery protectable-item list \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --fabric-name "$FABRIC_NAME" \
+  --protection-container-name "$SRC_CONTAINER" \
+  --query "[?properties.friendlyName=='$VM_NAME'].name" -o tsv)
+```
+
+### Step 11: Enable Replication
+
+```bash
+RPI_NAME="$VM_NAME-rpi"
+
+az site-recovery replication-protected-item create \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --fabric-name "$FABRIC_NAME" \
+  --protection-container-name "$SRC_CONTAINER" \
+  --name "$RPI_NAME" \
+  --protectable-item-name "$PROTECTABLE_ID" \
+  --policy-name "$ASR_POLICY" \
+  --protectable-item-type VirtualMachine \
+  --auto-protect true \
+  --recovery-azure-resource-group-id "$(az group show -n "$RG_DR" --query id -o tsv)" \
+  --recovery-azure-network-id "$(az network vnet show -g "$RG_DR" -n "$VNET_DR" --query id -o tsv)" \
+  --recovery-azure-subnet-name "$SUBNET_DR"
+```
+
+> **Operational note:**
+> A2A replication can also be enabled from the portal. For teams new to ASR, the portal is often simpler for the first rollout because it exposes network, cache storage, and target settings more clearly.
+
+### Step 12: Monitor Replication Health
+
+```bash
+az recoveryservices vault replication-protected-item list \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --output table
+```
+
+```bash
+az recoveryservices vault replication-protected-item list \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --query "[].{Name:name,State:provisioningState}" \
+  --output table
+```
+
+Wait until the protection state is healthy and the initial replication completes before testing failover.
+
+---
+
+## 9️⃣ Test Failover, Failover, Re-Protect, and Failback
+
+### Step 13: Create a Recovery Plan
+
+```bash
+az site-recovery recovery-plan create \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --name "$RECOVERY_PLAN" \
+  --primary-fabric-id "$FABRIC_NAME" \
+  --recovery-fabric-id "$FABRIC_NAME" \
+  --group-type Boot \
+  --replication-protected-items "$RPI_NAME"
+```
+
+### Step 14: Perform a Test Failover
+
+```bash
+az site-recovery recovery-plan test-failover \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --name "$RECOVERY_PLAN" \
+  --failover-direction PrimaryToRecovery
+```
+
+This creates a recovery VM in the DR region for validation without affecting production traffic.
+
+### Step 15: Clean Up the Test Failover
+
+```bash
+az site-recovery recovery-plan test-failover-cleanup \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --name "$RECOVERY_PLAN" \
+  --comments "Validated DR test"
+```
+
+### Step 16: Perform the Actual Failover
+
+```bash
+az site-recovery recovery-plan failover \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --name "$RECOVERY_PLAN" \
+  --failover-direction PrimaryToRecovery
+```
+
+### Step 17: Commit the Failover
+
+```bash
+az site-recovery recovery-plan failover-commit \
+  --resource-group "$VAULT_RG" \
+  --vault-name "$VAULT_NAME" \
+  --name "$RECOVERY_PLAN"
+```
+
+Once committed, the DR-side VM becomes the active production copy.
+
+### Step 18: Re-Protect and Prepare for Failback
+
+Re-protect reverses the replication direction so the recovered workload can be replicated back toward the original region. This step is commonly performed from the portal because the workflow is easier to validate visually.
+
+Portal sequence:
+
+1. Open the Recovery Services Vault.
+2. Go to **Replicated items**.
+3. Select the failed-over VM.
+4. Choose **Re-protect**.
+5. Set the original region as the new recovery target.
+
+### Step 19: Fail Back to the Original Region
+
+After reverse replication is healthy, run failover again in the opposite direction or use the portal to return service to the original region.
+
+---
+
+## 🔟 PowerShell Operations
+
+```powershell
+Connect-AzAccount
+
+$vault = Get-AzRecoveryServicesVault -Name "asr-vault"
+Set-AzRecoveryServicesAsrVaultContext -Vault $vault
+
+Get-AzRecoveryServicesAsrReplicationProtectedItem
+```
+
+PowerShell is useful for operational scripting, reporting, and teams already standardizing on Az modules.
+
+---
+
+## 1️⃣1️⃣ ASR Best Practices
+
+* Use a dedicated DR VNet and validate subnet mapping before failover
+* Monitor replication health through Azure Monitor and alerting
+* Test failover regularly and keep evidence for audit reviews
+* Build Recovery Plans for multi-tier workloads so dependencies start in order
+* Validate permissions for encrypted VMs and Key Vault access before enabling protection
+* Tag DR resources with owner, application, and recovery tier metadata
+
+---
+
+## 1️⃣2️⃣ ASR CLI Scope vs Portal Scope
+
+### What Works Well in CLI
+
+* Create resource groups and target network
+* Create policies and container mappings
+* Enable and monitor replication
+* Create recovery plans
+* Run scripted failover and cleanup flows
+
+### What Many Teams Still Prefer in Portal
+
+* First-time A2A configuration
+* Re-protect and failback validation
+* Reviewing replication health visually
+* Multi-VM orchestration checks before production DR drills
+
+---
+
+## 1️⃣3️⃣ Backup + DR Reference Architecture (Recommended)
 
 ![Image](https://docs.microsoft.com/en-us/azure/architecture/solution-ideas/media/disaster-recovery-smb-azure-site-recovery.png)
 
@@ -232,6 +560,7 @@ Application
 * ✅ Key Vault permissions validated (for encrypted VMs)
 * ✅ Audit logs enabled
 * ✅ Restore tested quarterly
+* ✅ DR test failover recorded and reviewed
 
 ---
 
@@ -244,20 +573,17 @@ Application
 | DR test                | Test failover report    |
 | RPO achieved           | ASR replication health  |
 | RTO achieved           | Recovery plan execution |
+| Failback readiness     | Re-protect status       |
 
 ---
 
 ## 📌 Architect Takeaways
 
-* **Backup ≠ DR** – they solve different problems
-* Automate **creation**, not **destruction**
-* Test restores more often than backups
-* Treat RSV as a **security boundary**
-* Always document **who presses the failover button**
-
----
-
-# Guide
+* **Backup ≠ DR** and production workloads need both
+* Automate setup and validation, but govern failover authority tightly
+* Test restore and test failover on a scheduled basis
+* Treat the Recovery Services Vault as a security boundary
+* Document failover, commit, re-protect, and failback ownership in runbooks
 
 ---
 
