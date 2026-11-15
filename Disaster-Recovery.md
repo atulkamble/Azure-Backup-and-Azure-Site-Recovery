@@ -105,6 +105,21 @@ az recoveryservices vault set-context \
   --resource-group rg-dr
 ```
 
+```
+VAULT_ID=$(az resource show \
+  --resource-group rg-dr \
+  --name asr-vault \
+  --resource-type Microsoft.RecoveryServices/vaults \
+  --query id -o tsv)
+
+az site-recovery fabric list \
+  --vault-name asr-vault \
+  --resource-group rg-dr
+```
+```
+az extension add --name site-recovery
+```
+
 ---
 
 # 🔁 Step 5: Enable Replication
